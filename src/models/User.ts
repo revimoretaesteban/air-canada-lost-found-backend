@@ -1,75 +1,61 @@
-import mongoose, { Document, Schema, Types } from 'mongoose';
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-export interface IUser extends Document {
+export interface IUser extends mongoose.Document {
   employeeNumber: string;
   password: string;
   firstName: string;
   lastName: string;
-  role: 'employee' | 'supervisor' | 'admin';
+  role: string;
+  permissions: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
-const UserSchema = new Schema({
+const userSchema = new mongoose.Schema({
   employeeNumber: {
     type: String,
     required: true,
-    unique: true,
+    unique: true
   },
   password: {
     type: String,
-    required: true,
+    required: true
   },
   firstName: {
     type: String,
-    required: true,
+    required: true
   },
   lastName: {
     type: String,
-    required: true,
+    required: true
   },
   role: {
     type: String,
-    enum: ['employee', 'supervisor', 'admin'],
-    default: 'employee',
+    enum: ['admin', 'supervisor', 'agent'],
+    default: 'agent',
+    required: true
   },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
+  permissions: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Permission'
+  }]
 }, {
-  timestamps: true,
+  timestamps: true
 });
 
 // Hash password before saving
-UserSchema.pre('save', async function(next) {
-  const user = this;
-  
-  // Only hash the password if it has been modified (or is new)
-  if (!user.isModified('password')) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(user.password, salt);
-    next();
-  } catch (error) {
-    next(error as Error);
+userSchema.pre('save', async function(next) {
+  if (this.isModified('password')) {
+    this.password = await bcrypt.hash(this.password, 8);
   }
+  next();
 });
 
 // Compare password method
-UserSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
-  try {
-    return await bcrypt.compare(candidatePassword, this.password);
-  } catch (error) {
-    throw error;
-  }
+userSchema.methods.comparePassword = async function(candidatePassword: string): Promise<boolean> {
+  return bcrypt.compare(candidatePassword, this.password);
 };
 
-export default mongoose.model<IUser>('User', UserSchema);
+export default mongoose.model<IUser>('User', userSchema);

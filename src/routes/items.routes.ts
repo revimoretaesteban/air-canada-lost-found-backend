@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { auth } from '../middleware/auth';
+import { auth, AuthenticatedRequest, createAuthenticatedHandler } from '../middleware/auth';
 import multer, { Multer } from 'multer';
 import { uploadToCloudinary, deleteFromCloudinary } from '../services/cloudinaryService';
 import LostItem from '../models/LostItem';
@@ -30,7 +30,7 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // Create new item
-router.post('/', auth, upload.array('images', 5), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', auth, upload.array('images', 5), createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { flightNumber, dateFound, location, description, category } = req.body;
     const files = req.files as (ExpressMulterFile & { stream: any })[];
@@ -51,7 +51,7 @@ router.post('/', auth, upload.array('images', 5), async (req: Request, res: Resp
       description,
       category,
       images,
-      foundBy: req.user?._id,
+      foundBy: req.user._id,
       status: 'onHand'
     });
 
@@ -68,10 +68,10 @@ router.post('/', auth, upload.array('images', 5), async (req: Request, res: Resp
       error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
-});
+}));
 
 // Get all items
-router.get('/', auth, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const items = await LostItem.find()
       .populate('foundBy', 'firstName lastName employeeNumber')
@@ -81,10 +81,10 @@ router.get('/', auth, async (req: Request, res: Response, next: NextFunction) =>
     console.error('Error fetching items:', error);
     res.status(500).json({ message: 'Error fetching items' });
   }
-});
+}));
 
 // Get single item
-router.get('/:id', auth, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:id', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const item = await LostItem.findById(req.params.id)
       .populate('foundBy', 'firstName lastName employeeNumber');
@@ -98,10 +98,10 @@ router.get('/:id', auth, async (req: Request, res: Response, next: NextFunction)
     console.error('Error fetching item:', error);
     res.status(500).json({ message: 'Error fetching item' });
   }
-});
+}));
 
 // Update item
-router.put('/:id', auth, async (req: Request, res: Response, next: NextFunction) => {
+router.put('/:id', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const item = await LostItem.findById(req.params.id);
     if (!item) {
@@ -120,10 +120,10 @@ router.put('/:id', auth, async (req: Request, res: Response, next: NextFunction)
     console.error('Error updating item:', error);
     res.status(500).json({ message: 'Error updating item' });
   }
-});
+}));
 
 // Delete item
-router.delete('/:id', auth, async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/:id', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const item = await LostItem.findById(req.params.id);
     if (!item) {
@@ -148,10 +148,10 @@ router.delete('/:id', auth, async (req: Request, res: Response, next: NextFuncti
     console.error('Error deleting item:', error);
     res.status(500).json({ message: 'Error deleting item' });
   }
-});
+}));
 
 // Search items
-router.get('/search/:term', auth, async (req: Request, res: Response, next: NextFunction) => {
+router.get('/search/:term', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { term } = req.params;
     const items = await LostItem.find({
@@ -169,6 +169,6 @@ router.get('/search/:term', auth, async (req: Request, res: Response, next: Next
     console.error('Error searching items:', error);
     res.status(500).json({ message: 'Error searching items' });
   }
-});
+}));
 
 export default router;

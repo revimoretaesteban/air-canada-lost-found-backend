@@ -1,156 +1,228 @@
-import express, { Request, Response, RequestHandler, NextFunction } from 'express';
-import { auth, hasAnyPermission, matchesPermission, AuthenticatedRequest, AuthenticatedRequestHandler } from '../middleware/auth';
-import { IPermission } from '../models/Permission';
-import DeliveredItem from '../models/DeliveredItem';
-import LostItem from '../models/LostItem';
+import express, { Request, Response, RequestHandler } from 'express';
 import multer from 'multer';
+import { auth, AuthenticatedRequest, isAuthenticated } from '../middleware/auth';
+import LostItem from '../models/LostItem';
 import cloudinaryService from '../services/cloudinary.service';
-import { Document, Types, ObjectId } from 'mongoose';
-
-interface LostItemDocument extends Document {
-  _id: Types.ObjectId;
-  flightNumber: string;
-  dateFound: Date;
-  location: string;
-  description: string;
-  category: string;
-  images: Array<{
-    publicId: string;
-    url: string;
-    thumbnailUrl?: string;
-  }>;
-  status: 'onHand' | 'delivered' | 'inProcess';
-  foundBy: {
-    _id: Types.ObjectId;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  };
-  supervisor?: {
-    _id: Types.ObjectId;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  };
-  deliveryInfo?: {
-    receiverName: string;
-    receiverPhone: string;
-    receiverEmail: string;
-    receiverIdentification: string;
-    notes?: string;
-    signature: string;
-    deliveryDate: string;
-  };
-}
+import { Types } from 'mongoose';
 
 const router = express.Router();
+
+// Configure multer for file upload
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Helper function to normalize status
+const normalizeStatus = (status: string): string => {
+  const statusMap: { [key: string]: string } = {
+    'on-hand': 'onHand',
+    'in-process': 'inProcess',
+    'delivered': 'delivered'
+  };
+  return statusMap[status.toLowerCase()] || status;
+};
+
 // Get all items
-router.get('/', auth, (async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+router.get('/', auth, (async (req: Request, res: Response) => {
   try {
-    let query = {};
+    if (!isAuthenticated(req)) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const query: any = {};
     
-    // If user doesn't have view_all_items permission, only show items they found
-    const permissions = req.user.permissions as IPermission[];
-    if (!permissions.some(p => 
-      p && matchesPermission(p, 'view_all_items')
-    )) {
-      query = { foundBy: req.user._id };
+    if (req.user.role !== 'admin' && req.user.role !== 'supervisor') {
+      query.foundBy = req.user._id;
     }
 
-    // Get non-delivered items
-    const nonDeliveredQuery = { ...query, status: { $ne: 'delivered' } };
-    const items = await LostItem.find(nonDeliveredQuery)
+    return LostItem.find(query)
       .populate('foundBy', 'firstName lastName employeeNumber')
-      .populate('supervisor', 'firstName lastName employeeNumber')
-      .sort({ dateFound: -1 });
-
-    // Get delivered items if user has permission
-    let deliveredItems: LostItemDocument[] = [];
-    if (permissions.some(p => 
-      p && matchesPermission(p, 'view_delivered_items')
-    )) {
-      const deliveredQuery = { ...query, status: 'delivered' };
-      let tempDeliveredItems = await LostItem.find(deliveredQuery)
-        .populate('foundBy', 'firstName lastName employeeNumber')
-        .populate('supervisor', 'firstName lastName employeeNumber')
-        .sort({ dateFound: -1 });
-      
-      deliveredItems = tempDeliveredItems.map(item => {
-        const itemObj = item.toObject();
-        return {
-          ...itemObj,
-          images: itemObj.images || [], // Ensure images array exists
-          foundBy: item.foundBy && typeof item.foundBy === 'object' && !('_id' in item.foundBy) 
-            ? item.foundBy 
-            : item.foundBy && typeof item.foundBy === 'object' 
-              ? {
-                  ...item.foundBy,
-                  _id: new Types.ObjectId(item.foundBy._id.toString())
-                }
-              : item.foundBy,
-          supervisor: item.supervisor && typeof item.supervisor === 'object' && !('_id' in item.supervisor)
-            ? item.supervisor
-            : item.supervisor && typeof item.supervisor === 'object'
-              ? {
-                  ...item.supervisor,
-                  _id: new Types.ObjectId(item.supervisor._id.toString())
-                }
-              : item.supervisor
-        };
-      }) as unknown as LostItemDocument[];
-    }
-
-    // Combine and send all items
-    const allItems = [...items, ...deliveredItems];
-    res.json(allItems);
+      .sort({ dateFound: -1 })
+      .then(items => res.json(items))
+      .catch(error => {
+        console.error('Error getting items:', error);
+        res.status(500).json({ message: 'Error getting items' });
+      });
   } catch (error) {
-    console.error('Error fetching items:', error);
-    res.status(500).json({ 
-      message: 'Error fetching items', 
-      error: error instanceof Error ? error.message : 'An unknown error occurred' 
-    });
+    console.error('Error getting items:', error);
+    return res.status(500).json({ message: 'Error getting items' });
   }
-}) as AuthenticatedRequestHandler);
+}) as RequestHandler);
 
-// Get single item
-router.get('/:id', auth, (async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+// Get item by ID
+router.get('/:id', auth, (async (req: Request, res: Response) => {
   try {
-    const item = await LostItem.findById(req.params.id)
+    if (!isAuthenticated(req)) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    return LostItem.findById(req.params.id)
       .populate('foundBy', 'firstName lastName employeeNumber')
-      .populate('supervisor', 'firstName lastName employeeNumber');
-    
+      .then(item => {
+        if (!item) {
+          return res.status(404).json({ message: 'Item not found' });
+        }
+
+        // Check if user exists and has permission to view this item
+        if (req.user.role !== 'admin' && req.user.role !== 'supervisor' && 
+            item.foundBy._id.toString() !== req.user._id.toString()) {
+          return res.status(403).json({ message: 'Not authorized to view this item' });
+        }
+
+        return res.json(item);
+      });
+  } catch (error) {
+    console.error('Error getting item:', error);
+    return res.status(500).json({ message: 'Error getting item' });
+  }
+}) as RequestHandler);
+
+// Create new item
+router.post('/', auth, upload.array('photos', 5), (async (req: Request, res: Response) => {
+  if (!isAuthenticated(req)) {
+    return res.status(401).json({ message: 'User not authenticated' });
+  }
+
+  const { itemName, description, location, category, flightNumber, dateFound } = req.body;
+
+  // Handle file uploads if any
+  const images: { url: string; publicId: string }[] = [];
+  const processFiles = async () => {
+    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+      // Upload photos to Cloudinary
+      const uploadPromises = req.files.map(file => 
+        cloudinaryService.uploadFile(
+          file.buffer,
+          file.mimetype,
+          file.originalname,
+          'lost',
+          flightNumber
+        )
+      );
+
+      const uploadedImages = await Promise.all(uploadPromises);
+      images.push(...uploadedImages);
+    }
+  };
+
+  return processFiles()
+    .then(() => {
+      // Create new item
+      const item = new LostItem({
+        itemName,
+        description,
+        location,
+        category,
+        flightNumber,
+        dateFound: dateFound ? new Date(dateFound) : new Date(),
+        foundBy: req.user?._id,
+        images,
+        status: 'onHand'
+      });
+
+      return item.save();
+    })
+    .then(item => LostItem.findById(item._id).populate('foundBy', 'firstName lastName employeeNumber'))
+    .then(populatedItem => res.status(201).json(populatedItem))
+    .catch(error => {
+      console.error('Error creating item:', error);
+      return res.status(500).json({ message: 'Error creating item' });
+    });
+}) as RequestHandler);
+
+// Update item
+router.put('/:id', auth, upload.array('photos', 5), (async (req: Request, res: Response) => {
+  try {
+    if (!isAuthenticated(req)) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const item = await LostItem.findById(req.params.id);
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
-    
-    res.json(item);
+
+    // Check if user exists and has permission to update this item
+    if (req.user.role !== 'admin' && req.user.role !== 'supervisor' && 
+        item.foundBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized to update this item' });
+    }
+
+    const { status, dateFound, ...otherUpdates } = req.body;
+    const updates = {
+      ...otherUpdates,
+      dateFound: dateFound ? new Date(dateFound) : item.dateFound,
+      ...(status && { status: normalizeStatus(status) })
+    };
+
+    // Handle file uploads if any
+    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+      const deletePromises = item.images.map(photo => 
+        photo.publicId ? cloudinaryService.deleteFile(photo.publicId) : Promise.resolve()
+      );
+      const uploadPromises = req.files.map(file => 
+        cloudinaryService.uploadFile(
+          file.buffer,
+          file.mimetype,
+          file.originalname,
+          'lost',
+          item.flightNumber
+        )
+      );
+      const [deleted, uploadedImages] = await Promise.all([Promise.all(deletePromises), Promise.all(uploadPromises)]);
+      Object.assign(item, { ...updates, images: uploadedImages });
+    } else {
+      Object.assign(item, updates);
+    }
+
+    const updatedItem = await item.save();
+    const populatedItem = await LostItem.findById(updatedItem._id).populate('foundBy', 'firstName lastName employeeNumber');
+    return res.json(populatedItem);
   } catch (error) {
-    console.error('Error fetching item:', error);
-    res.status(500).json({ 
-      message: 'Error fetching item', 
-      error: error instanceof Error ? error.message : 'An unknown error occurred' 
-    });
+    console.error('Error updating item:', error);
+    return res.status(500).json({ message: 'Error updating item' });
   }
-}) as AuthenticatedRequestHandler);
+}) as RequestHandler);
 
-// Create new item
-router.post('/', auth, upload.array('images', 5), ((async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  try {
-    console.log('Create item request received:', {
-      body: req.body,
-      files: req.files ? (req.files as Express.Multer.File[]).map(f => ({
-
-      })) : []
-    });
-  } catch (error) {
-    console.error('Error creating item:', error);
-    res.status(500).json({ 
-      message: 'Error creating item', 
-      error: error instanceof Error ? error.message : 'An unknown error occurred' 
-    });
+// Delete item
+router.delete('/:id', auth, (async (req: Request, res: Response) => {
+  if (!isAuthenticated(req)) {
+    return res.status(401).json({ message: 'User not authenticated' });
   }
-}) as AuthenticatedRequestHandler));
 
-export = router;
+  return LostItem.findById(req.params.id)
+    .then(item => {
+      if (!item) {
+        return res.status(404).json({ message: 'Item not found' });
+      }
+
+      // Check if user exists and has permission to delete this item
+      if (req.user.role !== 'admin' && req.user.role !== 'supervisor' && 
+          item.foundBy.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: 'Not authorized to delete this item' });
+      }
+
+      // Delete images from Cloudinary if they exist
+      if (item.images && item.images.length > 0) {
+        return Promise.all(
+          item.images.map(image => 
+            image.publicId ? cloudinaryService.deleteFile(image.publicId).catch(error => {
+              console.error(`Failed to delete image ${image.publicId} from Cloudinary:`, error);
+            }) : Promise.resolve()
+          )
+        ).then(() => item);
+      }
+      return item;
+    })
+    .then(item => {
+      if (!item || 'headersSent' in item) {
+        throw new Error('Item not found or already deleted');
+      }
+      return item.deleteOne();
+    })
+    .then(() => res.json({ message: 'Item deleted successfully' }))
+    .catch(error => {
+      console.error('Error deleting item:', error);
+      return res.status(500).json({ message: 'Error deleting item' });
+    });
+}) as RequestHandler);
+
+export default router;

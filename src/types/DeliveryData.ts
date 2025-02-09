@@ -1,9 +1,7 @@
 export interface DeliveryData {
-  receiverName?: string;
-  receiverPhone?: string;
-  receiverEmail?: string;
-  receiverIdentification?: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
   signature?: string;
-  deliveryDate?: string;
   notes?: string;
 }

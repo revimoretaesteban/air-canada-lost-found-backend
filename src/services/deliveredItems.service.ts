@@ -1,64 +1,70 @@
-import { DeliveredItem } from '../interfaces/DeliveredItem';
+import mongoose, { Types, Document } from 'mongoose';
+import DeliveredItemModel, { IDeliveredItem } from '../models/DeliveredItem';
 import LostItemModel, { ILostItem } from '../models/LostItem';
 import { DeliveryData } from '../types/DeliveryData';
-import mongoose, { Types, Document } from 'mongoose';
 
-class DeliveredItemsService {
+export class DeliveredItemsService {
   async markAsDelivered(
-    item: ILostItem,
+    item: ILostItem & { _id: Types.ObjectId },
     deliveryInfo: DeliveryData,
-    userId: string
-  ): Promise<string> {
+    deliveredBy: Types.ObjectId
+  ): Promise<IDeliveredItem> {
     try {
-      const deliveredItem = {
-        ...item.toObject(),
-        deliveryInfo,
-        deliveredAt: new Date(),
-        deliveredBy: new Types.ObjectId(userId),
-        status: 'delivered'
-      };
+      const deliveredItem = await this.createDeliveredItem(item, {
+        name: deliveryInfo.customerName,
+        email: deliveryInfo.customerEmail,
+        phone: deliveryInfo.customerPhone,
+        deliveryDate: new Date()
+      });
 
-      const updatedItem = await LostItemModel.findByIdAndUpdate<Document & ILostItem>(
-        item._id,
-        deliveredItem,
-        { new: true, runValidators: true }
-      );
+      // Update the original item's status
+      await LostItemModel.findByIdAndUpdate(item._id, {
+        status: 'delivered',
+        deliveredBy,
+        deliveredAt: new Date()
+      });
 
-      if (!updatedItem) {
-        throw new Error('Failed to update item');
-      }
-
-      return (updatedItem._id as unknown as Types.ObjectId).toString();
+      return deliveredItem;
     } catch (error) {
-      console.error('Error in markAsDelivered:', error);
       throw error;
     }
   }
 
-  async getDeliveredItems(): Promise<DeliveredItem[]> {
+  async getDeliveredItems(): Promise<IDeliveredItem[]> {
     try {
-      const items = await LostItemModel.find({ 
-        status: 'delivered',
-        deliveredBy: { $exists: true } // Only get items that have deliveredBy field
-      })
-        .populate('deliveredBy', 'name')
-        .sort({ deliveredAt: -1 });
-      
-      return items.map(item => {
-        const obj = item.toObject();
-        if (!obj.deliveredBy) {
-          throw new Error('Delivered item missing deliveredBy field');
-        }
-        return {
-          ...obj,
-          _id: item._id,
-          photoUrl: item.images[0]?.url || '', // Use the first image URL as photoUrl
-          deliveredAt: item.customerInfo?.deliveryDate || item.updatedAt, // Use delivery date or fallback to updatedAt
-          deliveredBy: obj.deliveredBy // This is now guaranteed to exist
-        } as DeliveredItem;
-      });
+      return await DeliveredItemModel.find().populate('foundBy');
     } catch (error) {
       console.error('Error in getDeliveredItems:', error);
+      throw error;
+    }
+  }
+
+  async createDeliveredItem(
+    lostItem: ILostItem & { _id: Types.ObjectId },
+    customerInfo: any
+  ): Promise<IDeliveredItem> {
+    try {
+      const deliveredItemData = {
+        itemName: lostItem.itemName,
+        description: lostItem.description,
+        location: lostItem.location,
+        category: lostItem.category,
+        images: lostItem.images,
+        foundBy: lostItem.foundBy,
+        flightNumber: lostItem.flightNumber,
+        dateFound: lostItem.dateFound,
+        dateDelivered: new Date(),
+        archived: false,
+        customerInfo: {
+          ...customerInfo,
+          deliveryDate: new Date()
+        }
+      };
+
+      const deliveredItem = new DeliveredItemModel(deliveredItemData);
+      await deliveredItem.save();
+      return deliveredItem;
+    } catch (error) {
       throw error;
     }
   }
