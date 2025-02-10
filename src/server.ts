@@ -18,35 +18,25 @@ console.log('Current working directory:', process.cwd());
 const app = express();
 
 // CORS configuration
-const allowedOrigins = [
-  'http://localhost:4173',  // Production preview
-  'http://localhost:5173',  // Development
-  'https://air-canada-lost-found-frontend.onrender.com', // Render frontend
-  process.env.FRONTEND_URL  // From .env
-].filter(Boolean);
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://air-canada-lost-found-frontend.onrender.com');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
 
 app.use(cors({
-  origin: function(origin: string | undefined, callback: (error: Error | null, success?: boolean) => void) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
-      callback(null, true);
-    } else {
-      console.log('Allowed origins:', allowedOrigins);
-      console.error('CORS error - Origin not allowed:', origin);
-      callback(null, true); // Temporarily allow all origins in production for debugging
-    }
-  },
+  origin: 'https://air-canada-lost-found-frontend.onrender.com',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin'
-  ],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['Content-Length', 'X-Requested-With']
 }));
 
