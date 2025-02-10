@@ -29,9 +29,8 @@ router.get('/', auth, (async (req: Request, res: Response) => {
 
     const query: any = {};
     
-    if (req.user.role !== 'admin' && req.user.role !== 'supervisor') {
-      query.foundBy = req.user._id;
-    }
+    // All roles can view all items
+    // Only restrict editing/deleting based on role
 
     return LostItem.find(query)
       .populate('foundBy', 'firstName lastName employeeNumber')
@@ -61,12 +60,7 @@ router.get('/:id', auth, (async (req: Request, res: Response) => {
           return res.status(404).json({ message: 'Item not found' });
         }
 
-        // Check if user exists and has permission to view this item
-        if (req.user.role !== 'admin' && req.user.role !== 'supervisor' && 
-            item.foundBy._id.toString() !== req.user._id.toString()) {
-          return res.status(403).json({ message: 'Not authorized to view this item' });
-        }
-
+        // All authenticated users can view items
         return res.json(item);
       });
   } catch (error) {
@@ -74,6 +68,55 @@ router.get('/:id', auth, (async (req: Request, res: Response) => {
     return res.status(500).json({ message: 'Error getting item' });
   }
 }) as RequestHandler);
+
+// Upload images for an item
+router.post('/:id/images', auth, upload.array('images', 5), async (req: Request, res: Response) => {
+  try {
+    if (!isAuthenticated(req)) {
+      return res.status(401).json({ message: 'User not authenticated' });
+    }
+
+    const item = await LostItem.findById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    // Check if user has permission to update this item
+    if (req.user.role !== 'admin' && req.user.role !== 'supervisor' && 
+        item.foundBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized to update this item' });
+    }
+
+    if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+      return res.status(400).json({ message: 'No images provided' });
+    }
+
+    // Upload new images to cloudinary
+    const uploadPromises = req.files.map(file => 
+      cloudinaryService.uploadFile(
+        file.buffer,
+        file.mimetype,
+        file.originalname,
+        'lost',
+        item.flightNumber
+      )
+    );
+
+    const uploadedImages = await Promise.all(uploadPromises);
+    
+    // Add new images to the existing ones
+    item.images = [...item.images, ...uploadedImages];
+    
+    const updatedItem = await item.save();
+    const populatedItem = await LostItem.findById(updatedItem._id)
+      .populate('foundBy', 'firstName lastName employeeNumber');
+    
+    return res.json(populatedItem);
+  } catch (error) {
+    console.error('Error uploading images:', error);
+    return res.status(500).json({ message: 'Error uploading images' });
+  }
+});
 
 // Create new item
 router.post('/', auth, upload.array('photos', 5), (async (req: Request, res: Response) => {

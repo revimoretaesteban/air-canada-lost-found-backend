@@ -6,22 +6,29 @@ interface ImageInfo {
   thumbnailUrl?: string;
 }
 
+interface UserInfo {
+  _id: mongoose.Types.ObjectId;
+  firstName: string;
+  lastName: string;
+  employeeNumber: string;
+}
+
 export interface ILostItem extends Document {
   itemName: string;
   description: string;
   location: string;
   category: string;
-  status: 'pending' | 'delivered' | 'archived';
+  status: 'pending' | 'onHand' | 'delivered' | 'archived';
   images: ImageInfo[];
-  foundBy: mongoose.Types.ObjectId;
-  supervisor: mongoose.Types.ObjectId;
+  foundBy: mongoose.Types.ObjectId | UserInfo;
+  supervisor: mongoose.Types.ObjectId | UserInfo;
   customerInfo?: {
     name: string;
     email: string;
     phone: string;
     deliveryDate?: Date;
   };
-  deliveredBy?: mongoose.Types.ObjectId;
+  deliveredBy?: mongoose.Types.ObjectId | UserInfo;
   deliveredAt?: Date;
   flightNumber: string;
   dateFound: Date;
@@ -34,8 +41,8 @@ const LostItemSchema: Schema = new Schema({
   category: { type: String, required: true },
   status: { 
     type: String, 
-    enum: ['pending', 'delivered', 'archived'],
-    default: 'pending'
+    enum: ['pending', 'onHand', 'delivered', 'archived'],
+    default: 'onHand'
   },
   images: [{
     url: String,
@@ -58,13 +65,17 @@ const LostItemSchema: Schema = new Schema({
   timestamps: true
 });
 
-// Ensure reportedBy is always populated
+// Ensure user references are always populated
 LostItemSchema.pre('find', function() {
-  this.populate('reportedBy');
+  this.populate('foundBy', 'firstName lastName employeeNumber')
+      .populate('supervisor', 'firstName lastName employeeNumber')
+      .populate('deliveredBy', 'firstName lastName employeeNumber');
 });
 
 LostItemSchema.pre('findOne', function() {
-  this.populate('reportedBy');
+  this.populate('foundBy', 'firstName lastName employeeNumber')
+      .populate('supervisor', 'firstName lastName employeeNumber')
+      .populate('deliveredBy', 'firstName lastName employeeNumber');
 });
 
 export default mongoose.model<ILostItem>('LostItem', LostItemSchema);

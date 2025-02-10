@@ -47,7 +47,7 @@ export function createAuthenticatedHandler(
 }
 
 // Middleware to authenticate requests
-export const auth: RequestHandler = createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+export const auth: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
 
@@ -71,7 +71,7 @@ export const auth: RequestHandler = createAuthenticatedHandler(async (req: Authe
     // Convert string permissions to ObjectIds if they aren't already
     const permissions = user.permissions.map(perm => perm.toString());
 
-    req.user = {
+    (req as AuthenticatedRequest).user = {
       _id: user._id as unknown as mongoose.Types.ObjectId,
       employeeNumber: user.employeeNumber,
       firstName: user.firstName,
@@ -84,12 +84,13 @@ export const auth: RequestHandler = createAuthenticatedHandler(async (req: Authe
 
     next();
   } catch (error) {
+    console.error('Auth middleware error:', error);
     res.status(401).json({
       message: 'Token is not valid',
       code: 'INVALID_TOKEN'
     });
   }
-});
+};
 
 // Middleware to check role authorization
 export const checkRole = (allowedRoles: string[]) => {

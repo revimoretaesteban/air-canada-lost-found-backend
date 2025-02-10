@@ -7,13 +7,21 @@ interface ImageInfo {
   thumbnailUrl?: string;
 }
 
+interface UserInfo {
+  _id: mongoose.Types.ObjectId;
+  firstName: string;
+  lastName: string;
+  employeeNumber: string;
+}
+
 export interface IDeliveredItem extends Document {
   itemName: string;
   description: string;
   location: string;
   category: string;
   images: ImageInfo[];
-  foundBy: mongoose.Types.ObjectId;
+  foundBy: mongoose.Types.ObjectId | UserInfo;
+  deliveredBy?: mongoose.Types.ObjectId | UserInfo;
   flightNumber: string;
   dateFound: Date;
   dateDelivered: Date;
@@ -22,8 +30,11 @@ export interface IDeliveredItem extends Document {
     name: string;
     email: string;
     phone: string;
-    deliveryDate?: Date;
+    identification: string;
+    signature: string;
   };
+  deliveryNotes?: string;
+  deliveryPhotos?: ImageInfo[];
 }
 
 const DeliveredItemSchema: Schema = new Schema({
@@ -37,6 +48,7 @@ const DeliveredItemSchema: Schema = new Schema({
     thumbnailUrl: String
   }],
   foundBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  deliveredBy: { type: Schema.Types.ObjectId, ref: 'User' },
   flightNumber: { type: String, required: true },
   dateFound: { type: Date, required: true },
   dateDelivered: { type: Date, required: true },
@@ -45,8 +57,15 @@ const DeliveredItemSchema: Schema = new Schema({
     name: { type: String, required: true },
     email: { type: String, required: true },
     phone: { type: String, required: true },
-    deliveryDate: Date
-  }
+    identification: { type: String, required: true },
+    signature: { type: String, required: true }
+  },
+  deliveryNotes: String,
+  deliveryPhotos: [{
+    url: String,
+    publicId: String,
+    thumbnailUrl: String
+  }]
 }, {
   timestamps: true
 });
@@ -54,10 +73,12 @@ const DeliveredItemSchema: Schema = new Schema({
 // Ensure references are always populated
 DeliveredItemSchema.pre('find', function() {
   this.populate('foundBy');
+  this.populate('deliveredBy');
 });
 
 DeliveredItemSchema.pre('findOne', function() {
   this.populate('foundBy');
+  this.populate('deliveredBy');
 });
 
 export default mongoose.model<IDeliveredItem>('DeliveredItem', DeliveredItemSchema);

@@ -62,6 +62,11 @@ router.post('/', auth, checkRole(['admin']), validateUser, async (req: Request, 
       return res.status(400).json({ message: 'Employee number already exists' });
     }
 
+    // Validate role
+    if (!['admin', 'supervisor', 'employee'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role specified' });
+    }
+
     // Create new user
     const user = new User({
       employeeNumber,
@@ -71,7 +76,15 @@ router.post('/', auth, checkRole(['admin']), validateUser, async (req: Request, 
       role
     });
 
-    await user.save();
+    try {
+      await user.save();
+    } catch (error) {
+      console.error('Error saving user:', error);
+      return res.status(500).json({ 
+        message: 'Error creating user',
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      });
+    }
 
     // Return user without password
     const userResponse = {
@@ -79,15 +92,16 @@ router.post('/', auth, checkRole(['admin']), validateUser, async (req: Request, 
       employeeNumber: user.employeeNumber,
       firstName: user.firstName,
       lastName: user.lastName,
-      role: user.role,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt
+      role: user.role
     };
 
     res.status(201).json(userResponse);
   } catch (error) {
-    console.error('Error creating user:', error);
-    res.status(500).json({ message: 'Error creating user' });
+    console.error('Error in user creation:', error);
+    res.status(500).json({ 
+      message: 'Error creating user',
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    });
   }
 });
 
@@ -131,7 +145,10 @@ router.put('/:id', auth, checkRole(['admin']), validateUser, async (req: Request
     res.json(userResponse);
   } catch (error) {
     console.error('Error updating user:', error);
-    res.status(500).json({ message: 'Error updating user' });
+    res.status(500).json({ 
+      message: 'Error updating user',
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    });
   }
 });
 
@@ -147,7 +164,10 @@ router.delete('/:id', auth, checkRole(['admin']), async (req: Request, res: Resp
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
     console.error('Error deleting user:', error);
-    res.status(500).json({ message: 'Error deleting user' });
+    res.status(500).json({ 
+      message: 'Error deleting user',
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    });
   }
 });
 

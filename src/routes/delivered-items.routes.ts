@@ -4,6 +4,7 @@ import { auth, checkRole, createAuthenticatedHandler, AuthenticatedRequest } fro
 import DeliveredItem from '../models/DeliveredItem';
 import LostItem from '../models/LostItem';
 import cloudinaryService from '../services/cloudinary.service';
+import mongoose from 'mongoose';
 
 const router = express.Router();
 
@@ -37,7 +38,9 @@ router.get('/search', auth, createAuthenticatedHandler(async (req: Authenticated
       query.$or = [
         { flightNumber: { $regex: searchTerm, $options: 'i' } },
         { description: { $regex: searchTerm, $options: 'i' } },
-        { deliveredTo: { $regex: searchTerm, $options: 'i' } },
+        { 'customerInfo.name': { $regex: searchTerm, $options: 'i' } },
+        { 'customerInfo.email': { $regex: searchTerm, $options: 'i' } },
+        { 'customerInfo.phone': { $regex: searchTerm, $options: 'i' } }
       ];
     }
 
@@ -46,14 +49,50 @@ router.get('/search', auth, createAuthenticatedHandler(async (req: Authenticated
     }
 
     const items = await DeliveredItem.find(query)
-      .populate('foundBy', 'firstName lastName employeeNumber')
-      .populate('deliveredBy', 'firstName lastName employeeNumber')
+      .populate({
+        path: 'foundBy',
+        select: 'firstName lastName employeeNumber',
+        options: { allowEmptyPaths: true }
+      })
+      .populate({
+        path: 'deliveredBy',
+        select: 'firstName lastName employeeNumber',
+        options: { allowEmptyPaths: true }
+      })
       .sort({ dateDelivered: -1 });
 
-    res.json(items);
+    // Clean up any items with missing user references
+    const cleanedItems = items.map(item => {
+      const cleanedItem = item.toObject();
+
+      if (!cleanedItem.foundBy || typeof cleanedItem.foundBy === 'string') {
+        cleanedItem.foundBy = {
+          _id: new mongoose.Types.ObjectId(),
+          firstName: 'Unknown',
+          lastName: 'User',
+          employeeNumber: 'N/A'
+        };
+      }
+      
+      if (!cleanedItem.deliveredBy || typeof cleanedItem.deliveredBy === 'string') {
+        cleanedItem.deliveredBy = {
+          _id: new mongoose.Types.ObjectId(),
+          firstName: 'Unknown',
+          lastName: 'User',
+          employeeNumber: 'N/A'
+        };
+      }
+      
+      return cleanedItem;
+    });
+
+    res.json(cleanedItems);
   } catch (error) {
     console.error('Error searching delivered items:', error);
-    res.status(500).json({ message: 'Error searching delivered items' });
+    res.status(500).json({ 
+      message: 'Error searching delivered items',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }));
 
@@ -238,12 +277,14 @@ router.post('/:id/revert', auth, checkRole(['admin']), createAuthenticatedHandle
 
     // Create a new lost item from the delivered item
     const lostItem = new LostItem({
+      itemName: deliveredItem.itemName,
       flightNumber: deliveredItem.flightNumber,
       description: deliveredItem.description,
       location: deliveredItem.location,
       category: deliveredItem.category,
       images: deliveredItem.images,
       foundBy: deliveredItem.foundBy,
+      supervisor: req.user._id, // Set the current user as supervisor
       dateFound: deliveredItem.dateDelivered, 
     });
 

@@ -9,16 +9,10 @@ const DEFAULT_PERMISSIONS = [
     action: 'view'
   },
   {
-    name: 'view_all_items',
-    description: 'View all lost and found items',
+    name: 'view_items',
+    description: 'View lost and found items',
     component: 'items',
-    action: 'view_all'
-  },
-  {
-    name: 'view_own_items',
-    description: 'View own lost and found items',
-    component: 'items',
-    action: 'view_own'
+    action: 'view'
   },
   {
     name: 'create_items',

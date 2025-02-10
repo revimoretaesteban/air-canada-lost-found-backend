@@ -1,8 +1,8 @@
 import express, { Request, Response, RequestHandler } from 'express';
 import { body } from 'express-validator';
 import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
-import User from '../models/User';
+import mongoose, { Document, Types } from 'mongoose';
+import User, { IUser } from '../models/User';
 import Permission, { IPermission } from '../models/Permission';
 import { auth, AuthenticatedRequest, createAuthenticatedHandler } from '../middleware/auth';
 
@@ -16,110 +16,136 @@ router.post('/register',
     body('firstName').notEmpty(),
     body('lastName').notEmpty(),
   ],
-  (async (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const { employeeNumber, password, firstName, lastName } = req.body;
       
-      const existingUser = await User.findOne({ employeeNumber });
+      const existingUser = await User.findOne({ employeeNumber }) as IUser | null;
       if (existingUser) {
         return res.status(400).json({ message: 'Employee number already exists' });
       }
 
-      const user = new User({
+      // Get default permissions for employees
+      const defaultPermissions = await Permission.find({
+        name: { 
+          $in: [
+            'view_items',
+            'view_dashboard',
+            'edit_items',
+            'view_reports'
+          ]
+        }
+      });
+
+      if (defaultPermissions.length === 0) {
+        console.error('Default permissions not found');
+        return res.status(500).json({ message: 'Error setting up user permissions' });
+      }
+
+      const user = await User.create({
         employeeNumber,
         password,
         firstName,
         lastName,
         role: 'employee', // Default role
-      });
-
-      await user.save();
+        permissions: defaultPermissions.map(p => p._id) // Assign all default permissions
+      }) as any;
 
       const tokenPayload = {
-        _id: user._id,
+        id: user._id.toString(),
         employeeNumber: user.employeeNumber,
-        role: user.role,
+        role: user.role
       };
 
       const token = jwt.sign(
         tokenPayload,
         process.env.JWT_SECRET || 'your-secret-key',
-        { 
-          expiresIn: '24h',
-          algorithm: 'HS256'
-        }
+        { expiresIn: '24h' }
       );
 
-      // Return user without password
-      const userResponse = {
-        _id: user._id,
-        employeeNumber: user.employeeNumber,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-      };
-
-      res.status(201).json({ user: userResponse, token });
+      res.status(201).json({
+        token,
+        user: {
+          _id: user._id,
+          employeeNumber: user.employeeNumber,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          permissions: user.permissions
+        }
+      });
     } catch (error) {
-      console.error('Error creating user:', error);
-      res.status(500).json({ message: 'Error creating user' });
+      console.error('Registration error:', error);
+      res.status(500).json({ message: 'Error registering user' });
     }
-}) as RequestHandler);
+  }
+);
 
 // Login route
-router.post('/login', (async (req: Request, res: Response) => {
+router.post('/login', async (req: Request, res: Response) => {
   try {
     const { employeeNumber, password } = req.body;
 
-    // Find user by employee number
-    const user = await User.findOne({ employeeNumber });
-    if (!user) {
-      return res.status(401).json({
-        message: 'Invalid credentials',
-        code: 'INVALID_CREDENTIALS'
-      });
+    const userDoc = await User.findOne({ employeeNumber }).select('+password').exec();
+    if (!userDoc) {
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Check password
-    const isMatch = await user.comparePassword(password);
+    const user = userDoc.toObject() as IUser & { _id: Types.ObjectId };
+
+    const isMatch = await userDoc.comparePassword(password);
     if (!isMatch) {
-      return res.status(401).json({
-        message: 'Invalid credentials',
-        code: 'INVALID_CREDENTIALS'
-      });
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Generate JWT token
+    // Create token payload
+    const tokenPayload = {
+      id: user._id.toString(),
+      employeeNumber: user.employeeNumber,
+      role: user.role
+    };
+
+    // Sign token
     const token = jwt.sign(
-      { id: user._id },
-      process.env.JWT_SECRET!,
+      tokenPayload,
+      process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
     );
 
-    // Return user info and token
+    // Return user data and token
     res.json({
+      token,
       user: {
         _id: user._id,
         employeeNumber: user.employeeNumber,
         firstName: user.firstName,
         lastName: user.lastName,
-        role: user.role
-      },
-      token
+        role: user.role,
+        permissions: user.permissions
+      }
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({
-      message: 'Error during login',
-      code: 'LOGIN_ERROR'
-    });
+    res.status(500).json({ message: 'Server error during login' });
   }
-}) as RequestHandler);
+});
+
+// Logout route
+router.post('/logout', auth, (req: Request, res: Response) => {
+  try {
+    // Since we're using JWT, we don't need to do anything server-side
+    // The client will remove the token
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ message: 'Error during logout' });
+  }
+});
 
 // Get current user route
 router.get('/me', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const user = await User.findById(req.user._id).select('-password') as IUser | null;
     if (!user) {
       return res.status(404).json({
         message: 'User not found',
@@ -142,7 +168,7 @@ router.post('/change-password', auth, createAuthenticatedHandler(async (req: Aut
     const { currentPassword, newPassword } = req.body;
 
     // Find user
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id) as IUser | null;
     if (!user) {
       return res.status(404).json({
         message: 'User not found',
@@ -200,7 +226,7 @@ router.get('/permissions', async (req: Request, res: Response) => {
 // Get all system permissions
 router.get('/system-permissions', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const permissions = await Permission.find();
+    const permissions = await Permission.find() as any;
     res.json(permissions);
   } catch (error) {
     console.error('Error fetching permissions:', error);
@@ -212,7 +238,7 @@ router.get('/system-permissions', auth, createAuthenticatedHandler(async (req: A
 router.put('/users/:userId/permissions', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     // Check if requesting user is admin
-    const requestingUser = await User.findById(req.user._id);
+    const requestingUser = await User.findById(req.user._id) as IUser | null;
     if (!requestingUser || requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied. Admin only.' });
     }
@@ -221,7 +247,7 @@ router.put('/users/:userId/permissions', auth, createAuthenticatedHandler(async 
     const { permissions } = req.body;
 
     // Validate all permissions exist in system by name
-    const validPermissions = await Permission.find({ name: { $in: permissions } });
+    const validPermissions = await Permission.find({ name: { $in: permissions } }) as any;
     if (validPermissions.length !== permissions.length) {
       return res.status(400).json({ message: 'Invalid permissions provided' });
     }
@@ -229,9 +255,9 @@ router.put('/users/:userId/permissions', auth, createAuthenticatedHandler(async 
     // Update user permissions with permission document references
     const user = await User.findByIdAndUpdate(
       userId,
-      { $set: { permissions: validPermissions.map(p => p._id) } },
+      { $set: { permissions: validPermissions.map((p: { _id: Types.ObjectId; name: string }) => p._id) } },
       { new: true }
-    ).populate('permissions');
+    ).populate('permissions') as any;
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
@@ -239,7 +265,7 @@ router.put('/users/:userId/permissions', auth, createAuthenticatedHandler(async 
 
     // Log permission update
     console.log(`Updated permissions for user ${user.employeeNumber}:`, 
-      validPermissions.map(p => p.name));
+      validPermissions.map((p: { _id: Types.ObjectId; name: string }) => p.name));
 
     res.json({ 
       user: {
@@ -262,7 +288,7 @@ router.put('/users/:userId/permissions', auth, createAuthenticatedHandler(async 
 router.get('/users/:userId/permissions', auth, createAuthenticatedHandler(async (req: AuthenticatedRequest, res: Response) => {
   try {
     // Check if the requesting user is an admin
-    const requestingUser = await User.findById(req.user._id);
+    const requestingUser = await User.findById(req.user._id) as IUser | null;
     if (!requestingUser || requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Only admins can view permissions' });
     }
@@ -270,7 +296,7 @@ router.get('/users/:userId/permissions', auth, createAuthenticatedHandler(async 
     const { userId } = req.params;
 
     // Find the user
-    const user = await User.findById(userId).populate('permissions');
+    const user = await User.findById(userId).populate('permissions') as any;
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }

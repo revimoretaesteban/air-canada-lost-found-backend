@@ -17,12 +17,33 @@ console.log('Current working directory:', process.cwd());
 
 const app = express();
 
-// CORS configuration with more permissive settings
+// CORS configuration
+const allowedOrigins = [
+  'http://localhost:4173',  // Production preview
+  'http://localhost:5173',  // Development
+  process.env.FRONTEND_URL  // From .env
+].filter(Boolean);
+
 app.use(cors({
-  origin: true, // Allow all origins in development
+  origin: function(origin: string | undefined, callback: (error: Error | null, success?: boolean) => void) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      console.error('CORS error - Origin not allowed:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept'
+  ]
 }));
 
 app.use(express.json());
