@@ -21,6 +21,7 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:4173',  // Production preview
   'http://localhost:5173',  // Development
+  'https://air-canada-lost-found-frontend.onrender.com', // Render frontend
   process.env.FRONTEND_URL  // From .env
 ].filter(Boolean);
 
@@ -29,11 +30,12 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+    if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
       callback(null, true);
     } else {
+      console.log('Allowed origins:', allowedOrigins);
       console.error('CORS error - Origin not allowed:', origin);
-      callback(new Error('Not allowed by CORS'));
+      callback(null, true); // Temporarily allow all origins in production for debugging
     }
   },
   credentials: true,
@@ -42,8 +44,10 @@ app.use(cors({
     'Content-Type',
     'Authorization',
     'X-Requested-With',
-    'Accept'
-  ]
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['Content-Length', 'X-Requested-With']
 }));
 
 app.use(express.json());
